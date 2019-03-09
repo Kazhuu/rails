@@ -93,6 +93,30 @@ module ActiveSupport
         parallelize_me!
       end
 
+      # Responsible for running all runnable methods in a given class,
+      # each in its own instance. Each instance is passed to the
+      # reporter to record.
+      def run reporter, options = {}
+        filter = options[:filter] || "/./"
+        filter = Regexp.new $1 if filter =~ %r%/(.*)/%
+
+        filtered_methods = self.runnable_methods.find_all do |m|
+          filter === m || filter === "#{self}##{m}"
+        end
+
+        exclude = options[:exclude]
+        exclude = Regexp.new $1 if exclude =~ %r%/(.*)/%
+
+        filtered_methods.delete_if do |m|
+          exclude === m || exclude === "#{self}##{m}"
+        end
+
+        return if filtered_methods.empty?
+        filtered_methods.each do |method_name|
+          run_one_method self, method_name, reporter
+        end
+      end
+
       # Set up hook for parallel testing. This can be used if you have multiple
       # databases or any behavior that needs to be run after the process is forked
       # but before the tests run.

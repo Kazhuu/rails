@@ -12,6 +12,9 @@ module ActiveSupport
 
         def initialize
           @queue = Queue.new
+          @methods = []
+          @last_klass = nil
+          @last_reporter = nil
         end
 
         def record(reporter, result)
@@ -22,9 +25,23 @@ module ActiveSupport
           end
         end
 
+        # Buffer test methods for one test class and push them to the queue as
+        # a group.
         def <<(o)
-          o[2] = DRbObject.new(o[2]) if o
-          @queue << o
+          if o.nil?
+            @queue << [@last_klass, @methods, @last_reporter] unless @methods.empty?
+            @methods = []
+            @queue << o
+            return
+          end
+          @last_klass = o[0] if @last_klass.nil?
+          if @last_klass != o[0]
+            @queue << [@last_klass, @methods, @last_reporter]
+            @last_klass = o[0]
+            @methods = []
+          end
+          @last_reporter = DRbObject.new(o[2])
+          @methods << o[1]
         end
 
         def pop; @queue.pop; end
@@ -77,19 +94,20 @@ module ActiveSupport
 
             while job = queue.pop
               klass    = job[0]
-              method   = job[1]
+              methods  = job[1]
               reporter = job[2]
-              result = klass.with_info_handler reporter do
-                Minitest.run_one_method(klass, method)
-              end
-
-              begin
-                queue.record(reporter, result)
-              rescue DRb::DRbConnError
-                result.failures.each do |failure|
-                  failure.exception = DRb::DRbRemoteError.new(failure.exception)
+              klass.with_info_handler reporter do
+                methods.each do |method_name|
+                  result = Minitest.run_one_method(klass, method_name)
+                  begin
+                    queue.record(reporter, result)
+                  rescue DRb::DRbConnError
+                    result.failures.each do |failure|
+                      failure.exception = DRb::DRbRemoteError.new(failure.exception)
+                    end
+                    queue.record(reporter, result)
+                  end
                 end
-                queue.record(reporter, result)
               end
             end
           ensure
